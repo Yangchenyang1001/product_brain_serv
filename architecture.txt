@@ -1,0 +1,85 @@
+shopkeeper_brain:
+    knowledge/
+    ├── api/                              # API 路由层
+    │   ├── query_router.py              # 查询服务路由 (port 8001)
+    │   │   ├── POST /query              # 发起查询
+    │   │   ├── GET /stream/{session_id} # SSE 流式获取
+    │   │   ├── GET /history/{session_id}# 获取历史
+    │   │   └── DELETE /history/...      # 清除历史
+    │   └── import_router.py             # 导入服务路由 (port 8000)
+    │       ├── POST /upload             # 上传文件
+    │       └── GET /status/{task_id}    # 查询任务状态
+    │
+    ├── core/                             # 核心配置
+    │   ├── deps.py                      # 依赖注入（单例管理）
+    │   └── paths.py                     # 路径常量配置
+    │
+    ├── processor/                        # 业务处理流程（LangGraph）
+    │   ├── import_process/              # 导入流程
+    │   │   ├── main_graph.py           # 导入流程图定义
+    │   │   ├── state.py                # 状态类型定义
+    │   │   ├── base.py                 # 父节点模板代码
+    │   │   ├── config.py               # 导入流程配置
+    │   │   ├── exceptions.py           # 导入流程异常类
+    │   │   └── nodes/                  # 处理节点
+    │   │       ├── entry.py            # 入口节点
+    │   │       ├── pdf_to_md.py        # PDF 转 MD
+    │   │       ├── md_img.py           # 图片处理
+    │   │       ├── document_split.py   # 文档切分
+    │   │       ├── item_name_recognition.py  # 商品识别
+    │   │       ├── bge_embedding.py    # 向量嵌入
+    │   │       └── import_milvus.py    # Milvus 存储
+    │   │
+    │   └── query_process/               # 查询流程
+    │       ├── main_graph.py           # 查询流程图定义
+    │       ├── state.py                # 状态类型定义
+    │       ├── base.py                 # 父节点模板代码
+    │       ├── config.py               # 查询流程配置
+    │       ├── exceptions.py           # 查询流程异常类
+    │       └── nodes/                  # 处理节点
+    │           ├── item_name_confirm.py    # 商品确认
+    │           ├── vector_search.py        # 向量检索
+    │           ├── hyde_search.py          # HyDE 检索
+    │           ├── web_search_mcp.py       # Web 搜索
+    │           ├── rrf.py                  # RRF 融合
+    │           ├── rerank.py               # 重排序
+    │           └── answer_output.py        # 答案生成
+    │
+    ├── schema/                           # 数据模型定义
+    │   ├── query_schema.py              # 查询请求/响应模型
+    │   ├── upload_schema.py             # 上传响应模型
+    │   └── task_schema.py               # 任务状态模型
+    │
+    ├── services/                         # 业务服务层
+    │   ├── file_import_service.py       # 文件导入服务
+    │   └── query_service.py              # 检索服务
+    │
+    ├── utils/                            # 工具函数库
+    │   │   ├── base.py                  # 客户端管理器基类，双重检查锁模板方法
+    │   │   ├── ai_clients.py            # LLM客户端、BGE-M3模型、Reranker模型
+    │   │   ├── storage_clients.py       # MinIO、Milvus、Mongo客户端
+    │   ├── milvus_utils.py              # Milvus 向量库操作
+    │   ├── embedding_utils.py           # 向量嵌入工具
+    │   ├── llm_utils.py                 # LLM 客户端封装
+    │   ├── mongo_history_utils.py       # MongoDB 历史记录
+    │   ├── sse_utils.py                 # SSE 流式推送
+    │   ├── task_utils.py                # 任务状态管理
+    │
+    ├── schema/                            # 数据模型
+    │   ├── query_schema.py   # QueryRequest、QueryResponse、StreamSubmitResponse
+    │   ├── task_schema.py    # TaskStatusResponse
+    │   └── upload_schema.py  # UploadResponse、TaskStatusResponse
+    │
+    ├── prompt/                            # 提示词
+    │   ├── import_prompt.py              # 商品名提取
+    │   └── query_prompt.py               # 假设问题、答案
+    │
+    ├── front/                            # 前端页面
+    │   ├── chat.html                    # 聊天界面
+    │   └── import.html                  # 导入界面
+    │
+    ├── test/                             # 测试代码
+    ├── docs/                             # 文档目录
+    ├── temp_data/                        # 临时数据目录
+    ├── .env                              # 环境配置文件
+    └── requirements.txt                  # Python 依赖声明

@@ -1,0 +1,88 @@
+# ==================== 用户指定忽略项 ====================
+# CodeBuddy 技能/生成文件
+.codebuddy/
+
+# 临时数据目录（导入流程中间产物）
+knowledge/temp_data/
+knowledge/temp_data/**
+
+# 临时文件目录
+knowledge/temp-files/
+knowledge/temp-files/**
+
+# 测试评估与输出目录
+knowledge/test/eval/
+knowledge/test/output/
+
+# 环境变量配置文件（包含敏感信息，禁止提交）
+.env
+.env.*
+*/.env
+**/.env
+
+
+# ==================== Python 相关 ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# 打包/分发
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# 测试/覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+
+# ==================== IDE / 编辑器 ====================
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+
+# ==================== 操作系统 ====================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+
+# ==================== 日志 / 临时文件 ====================
+*.log
+logs/
+*.tmp
+*.bak
+
+
+# ==================== 模型 / 大文件缓存 ====================
+# HuggingFace / ModelScope 缓存
+.cache/
+model_cache/
+models/*.bin
+models/*.safetensors
+models/*.pt
+models/*.onnx
+
+# MinerU / PDF 转换中间产物
+*.pdf.md.tmp
+
+
+# ==================== 保留项（避免过度忽略） ====================
+# 保留各目录的 .gitkeep，方便占位
+!**/.gitkeep
