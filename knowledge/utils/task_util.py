@@ -125,15 +125,15 @@ def clear_task(task_id: str):
     _tasks_result.pop(task_id, None)
 
 
-def set_task_result(task_id: str, key: str, value: str) -> None:
+def set_task_result(task_id: str, key: str, value: Any) -> None:
     """
-    存储任务结果字段（如 answer / error）。
+    存储任务结果字段（如 answer / error / image_urls）。
     """
     _tasks_result[task_id][key] = value
 
 
-def get_task_result(task_id: str, key: str, default: str = "") -> str:
+def get_task_result(task_id: str, key: str, default: Any = "") -> Any:
     """
-    获取任务结果字段（如 answer / error）。
+    获取任务结果字段（如 answer / error / image_urls）。
     """
     return _tasks_result.get(task_id, {}).get(key, default)

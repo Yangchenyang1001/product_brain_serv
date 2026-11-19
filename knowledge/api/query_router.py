@@ -65,7 +65,9 @@ def register_router(app):
             await loop.run_in_executor(None, service.run_query_graph, original_query, session_id, task_id, is_stream)
             # service.run_query_graph(original_query, session_id, task_id, is_stream)
             answer = service.get_task_result(task_id, "answer")
-        return QueryResponse(message="最终答案生成", session_id=session_id, answer=answer)
+            image_urls = service.get_task_result(task_id, "image_urls") or []
+        return QueryResponse(message="最终答案生成", session_id=session_id, answer=answer,
+                             image_urls=image_urls)
 
     @app.get("/stream/{task_id}")
     async def stream(task_id: str, request: Request

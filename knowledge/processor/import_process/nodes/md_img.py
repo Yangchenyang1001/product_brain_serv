@@ -11,6 +11,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple, Set, List, Dict, Deque
+from urllib.parse import quote
 
 from langchain_openai import OpenAI
 
@@ -324,9 +325,9 @@ class ImageUploader:
                 minio_client.fput_object(
                     minio_bucket, object_name, img.path
                 )
-                # 构建url地址
+                # 构建url地址（对象名里可能含中文/空格，必须编码，否则裸 URL 会被截断）
                 remote_url = (
-                    f"{minio_base_url}/{minio_bucket}/{object_name}"
+                    f"{minio_base_url}/{minio_bucket}/{quote(object_name, safe='/')}"
                 )
                 self.logger.info(
                     f"【step_4.1】 (ImageUploader.upload_and_replace)：{img.name} 上传成功, 远程地址: {remote_url}")

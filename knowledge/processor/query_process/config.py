@@ -20,6 +20,10 @@ class QueryConfig:
     max_context_chars: int = field(
         default_factory=lambda: int(os.getenv("MAX_CONTEXT_CHARS", "12000"))
     )
+    # 答案末尾自动附带的图片数量上限（从检索切片中的 markdown 图片提取）
+    max_answer_images: int = field(
+        default_factory=lambda: int(os.getenv("MAX_ANSWER_IMAGES", "3"))
+    )
 
     # ==================== Rerank 配置 ====================
     rerank_max_top_k: int = field(

@@ -22,6 +22,7 @@ def save_chat_message(
         rewritten_query: str = "",
         item_names: List[str] = None,
         message_id: str = None,
+        image_urls: List[str] = None,
 ) -> str:
     """
     MongoDB的写入操作
@@ -33,6 +34,7 @@ def save_chat_message(
         rewritten_query:
         item_names:
         message_id:
+        image_urls: 助手回复附带的图片 URL 列表
 
     Returns:
 
@@ -46,6 +48,7 @@ def save_chat_message(
         "text": text,  # 内容
         "rewritten_query": rewritten_query,  # 重写后问题
         "item_names": item_names or [],  # 商品名列表
+        "image_urls": image_urls or [],  # 附带图片
         "ts": ts,  # 时间戳
     }
 

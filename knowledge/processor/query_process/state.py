@@ -24,6 +24,7 @@ class QueryGraphState(TypedDict):
     reranked_docs: list  # 重排序后的文档
     prompt: str  # 提示词
     answer: str  # 答案
+    image_urls: List[str]  # 答案附带的图片 URL 列表
     item_names: List[str]  # 商品名称
     rewritten_query: str  # 重写查询
     history: list  # 历史对话
@@ -44,6 +45,7 @@ DEFAULT_STATE: QueryGraphState = {
     "reranked_docs": [],
     "prompt": "",
     "answer": "",
+    "image_urls": [],
     "item_names": [],
     "rewritten_query": "",
     "history": [],

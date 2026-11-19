@@ -3,6 +3,7 @@
 
 将重排后的文档作为上下文，调用 LLM 生成最终答案，并通过 SSE 流式推送给前端。
 """
+import re
 from typing import List, Dict, Tuple
 
 from knowledge.processor.query_process.base import BaseNode, T
@@ -13,6 +14,13 @@ from knowledge.utils.mongo_history_util import save_chat_message
 from knowledge.utils.sse_util import push_sse_event, SSEEvent
 from knowledge.utils.task_util import set_task_result
 
+# 匹配 markdown 图片语法：![描述](http://...)
+# 注意：MinIO 对象名可能含中文/空格（如 "H3C LA2608室内无线网关 用户手册-6W100-整本手册"），
+# 所以括号内必须允许空格，只在遇到右括号时结束，否则会一条都匹配不到
+MD_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(\s*(https?://[^)]+?)\s*\)")
+# 匹配答案末尾可能存在的【图片】区块（模型自己输出的）
+IMAGE_BLOCK_PATTERN = re.compile(r"\n*【\s*图片\s*】[\s\S]*$")
+
 
 class AnswerOutputNode(BaseNode):
     name: str = "answer_output_node"
@@ -20,6 +28,62 @@ class AnswerOutputNode(BaseNode):
     def _push_existing_answer(self, state: QueryGraphState):
         if not state.get("answer"):
             set_task_result(state["task_id"], "answer", state["answer"])
+
+    @staticmethod
+    def _normalize_image_url(url: str) -> str:
+        """规范化图片 URL：对象名里可能带空格（如中文文档名），不编码会截断链接。"""
+        return (url or "").strip().replace(" ", "%20")
+
+    def _collect_image_urls(self, reranked_docs: List[Dict]) -> List[str]:
+        """从重排文档的 content 中确定性提取 markdown 图片 URL。
+
+        不再依赖大模型把长 URL 原样抄进答案，避免模型直接省略图片区块。
+        """
+        self.log_step("_collect_image_urls", "提取切片图片")
+        image_urls: List[str] = []
+        for doc in reranked_docs or []:
+            content = doc.get("content", "") or ""
+            for raw_url in MD_IMAGE_PATTERN.findall(content):
+                url = self._normalize_image_url(raw_url)
+                if url and url not in image_urls:
+                    image_urls.append(url)
+        max_images = self.config.max_answer_images
+        if max_images and max_images > 0:
+            image_urls = image_urls[:max_images]
+        self.logger.info(f"从检索结果中提取到 {len(image_urls)} 张图片")
+        return image_urls
+
+    def _attach_images(self, state: QueryGraphState):
+        """把图片 URL 以【图片】区块确定性追加到答案末尾。
+
+        模型自己输出的图片区块/markdown 图片会先被清掉，统一由后端追加，
+        保证 URL 合法（空格已编码）且格式与前端解析逻辑一致。
+        """
+        self.log_step("_attach_images", "追加图片区块")
+        image_urls = state.get("image_urls") or []
+        answer = (state.get("answer") or "").strip()
+
+        if not image_urls:
+            return
+        if not answer:
+            # 生成失败也给出图片，避免用户什么都看不到
+            answer = "暂无文字答案，可参考以下图片："
+
+        # 去掉模型自己写的【图片】区块和 markdown 图片，避免重复或 URL 抄错
+        answer = IMAGE_BLOCK_PATTERN.sub("", answer)
+        answer = MD_IMAGE_PATTERN.sub("", answer).strip()
+
+        image_block = "【图片】\n" + "\n".join(image_urls)
+        state["answer"] = f"{answer}\n\n{image_block}"
+
+        # 流式场景：图片区块作为一次 delta 补发，前端会立即渲染
+        if state.get("is_stream") and state.get("task_id"):
+            push_sse_event(
+                state["task_id"],
+                SSEEvent.DELTA,
+                {"delta": f"\n\n{image_block}"}
+            )
+
     def _build_prompt(self, state: QueryGraphState) -> str:
         self.log_step("_build_prompt", "构建提示词")
         char_budget = self.config.max_context_chars
@@ -51,6 +115,7 @@ class AnswerOutputNode(BaseNode):
 
         for idx, doc in enumerate(reranked_docs, 1):
             content = doc.get("content", "").strip()
+            self.log_step("_format_reranked_docs", f"topN ： {content}")
             if not content:
                 continue
 
@@ -170,6 +235,7 @@ class AnswerOutputNode(BaseNode):
                     text=state["answer"],
                     rewritten_query=rewritten_query,
                     item_names=item_names,
+                    image_urls=state.get("image_urls") or [],
                 )
         except Exception as e:
             self.logger.warning(f"写入历史记录失败: {e}")
@@ -198,6 +264,10 @@ class AnswerOutputNode(BaseNode):
             state["prompt"] = prompt
             # step6 调用LLM大模型生成答案
             self._generate_answer(state,prompt)
+            # step6.1 从检索切片里提取图片并确定性追加到答案
+            state["image_urls"] = self._collect_image_urls(state.get("reranked_docs") or [])
+            self._attach_images(state)
+            set_task_result(state["task_id"], "image_urls", state.get("image_urls") or [])
 
         # step7 写入历史记录
         self._write_history(state)

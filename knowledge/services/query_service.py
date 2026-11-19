@@ -63,6 +63,7 @@ class QueryService:
                 "text": r.get("text", ""),
                 "rewritten_query": r.get("rewritten_query", ""),
                 "item_names": r.get("item_names", []),
+                "image_urls": r.get("image_urls", []),
                 "ts": r.get("ts"),
             }
             for r in records

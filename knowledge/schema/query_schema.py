@@ -21,6 +21,7 @@ class QueryResponse(BaseModel):
     message: str = Field(..., description="响应消息")
     session_id: str = Field(..., description="会话ID")
     answer: str = Field("", description="生成的答案")
+    image_urls: List[str] = Field(default_factory=list, description="答案附带的图片URL")
 
 #流式
 class StreamSubmitResponse(BaseModel):
@@ -36,6 +37,7 @@ class HistoryItem(BaseModel):
     text: str = ""
     rewritten_query: str = ""
     item_names: List[str] = Field(default_factory=list)
+    image_urls: List[str] = Field(default_factory=list)
     ts: Optional[float] = None
 
 

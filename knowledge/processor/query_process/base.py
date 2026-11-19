@@ -92,7 +92,10 @@ class BaseNode(ABC):
                         push_sse_event(
                             state["task_id"],
                             SSEEvent.FINAL,
-                            {"answer": state.get("answer", "")}
+                            {
+                                "answer": state.get("answer", ""),
+                                "image_urls": state.get("image_urls") or [],
+                            }
                         )
 
             self.logger.info(f"--- {self.name} 完成 ---")
