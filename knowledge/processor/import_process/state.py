@@ -20,6 +20,7 @@ class ImportGraphState(TypedDict, total=False):
 
     # ==================== 任务标识 ====================
     task_id: str  # 任务 ID，用于任务追踪
+    document_id: str  # 文档 ID（标准 UUID），主切片的归属边界，与 task_id 不复用
 
     # ==================== 控制标志 ====================
     is_md_read_enabled: bool  # 是否启用 MD 读取
@@ -43,6 +44,7 @@ class ImportGraphState(TypedDict, total=False):
 # ==================== 默认状态模板 ====================
 GRAPH_DEFAULT_STATE: ImportGraphState = {
     "task_id": "",
+    "document_id": "",
     "is_pdf_read_enabled": False,
     "is_md_read_enabled": False,
     "file_dir": "",

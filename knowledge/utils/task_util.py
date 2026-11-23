@@ -110,7 +110,8 @@ def get_task_info(task_id: str) -> Dict[str, Any]:
         "status": get_task_status(task_id),
         "running_list": get_running_task_list(task_id),
         "done_list": get_done_task_list(task_id),
-        "durations": get_node_durations(task_id)
+        "durations": get_node_durations(task_id),
+        "result": get_task_results(task_id),
     }
 
 
@@ -137,3 +138,10 @@ def get_task_result(task_id: str, key: str, default: Any = "") -> Any:
     获取任务结果字段（如 answer / error / image_urls）。
     """
     return _tasks_result.get(task_id, {}).get(key, default)
+
+
+def get_task_results(task_id: str) -> Dict[str, Any]:
+    """
+    获取任务的全部产出字段（返回副本，避免外部直接修改内部容器）。
+    """
+    return dict(_tasks_result.get(task_id, {}))

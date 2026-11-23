@@ -8,6 +8,7 @@
 """
 import json
 import logging
+import uuid
 
 from langgraph.constants import END
 from langgraph.graph.state import CompiledStateGraph, StateGraph
@@ -154,6 +155,8 @@ if __name__ == '__main__':
         inputState={
             "import_file_path": import_file_path,
             "file_dir": file_dir,
+            # 手动调试也必须显式给文档ID，入库节点会校验其必填与UUID格式
+            "document_id": str(uuid.uuid4()),
         }
     )
 

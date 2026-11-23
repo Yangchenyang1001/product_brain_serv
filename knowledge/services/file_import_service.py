@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import uuid
+from typing import Dict
 
 from fastapi import UploadFile
 
@@ -17,7 +18,7 @@ from knowledge.processor.import_process.exceptions import FileProcessingError, M
 from knowledge.processor.import_process.main_graph import run_import_graph
 from knowledge.utils.client.storage_clients import StorageClients
 from knowledge.utils.task_util import update_task_status, add_running_task, add_done_task, TASK_STATUS_PROCESSING, \
-    TASK_STATUS_COMPLETED, TASK_STATUS_FAILED
+    TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, set_task_result
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,11 @@ class ImportFileService:
     处理上传文件的业务逻辑
     """
 
-    def process_upload_file(self, file: UploadFile):
-        # 生成任务ID
+    def process_upload_file(self, file: UploadFile) -> Dict[str, str]:
+        # 1. 生成任务ID：仅用于流程追踪与 /status 轮询
         task_id = self.generate_task_id()
+        # 2. 生成文档ID：主切片的归属边界，后续查询/编辑/删除切片都以它为入口
+        document_id = self.generate_document_id()
         # 文件上传存储路径
         date_path = self._get_date_path(get_local_base_dir())
         file_dir = os.path.join(date_path, task_id)
@@ -52,31 +55,48 @@ class ImportFileService:
 
         add_done_task(task_id,"upload_file")
 
-        return task_id, file_dir, import_file_path
+        # 3. 上传上下文：document_id 随图状态一路带到入库节点
+        return {
+            "task_id": task_id,
+            "document_id": document_id,
+            "file_dir": file_dir,
+            "import_file_path": import_file_path,
+        }
 
     def generate_task_id(self):
         return uuid.uuid4().hex[:8]
+
+    def generate_document_id(self) -> str:
+        """生成标准 UUID 字符串，切片管理接口按 UUID 校验，不能使用截断 ID。"""
+        return str(uuid.uuid4())
 
     """
     运行导入流程图
     """
 
-    def run_import_graph(self, task_id, file_dir, import_file_path):
+    def run_import_graph(self, upload_context: Dict[str, str]):
+        task_id = upload_context["task_id"]
+        document_id = upload_context["document_id"]
+        # 文档ID先落库，导入失败时前端也能拿到该文档标识用于排障
+        set_task_result(task_id, "document_id", document_id)
 
         try:
             inputState = {
-                "import_file_path": import_file_path,
-                "file_dir": file_dir,
-                "task_id": task_id
+                "import_file_path": upload_context["import_file_path"],
+                "file_dir": upload_context["file_dir"],
+                "task_id": task_id,
+                "document_id": document_id,
             }
             update_task_status(task_id, TASK_STATUS_PROCESSING)
-            run_import_graph(inputState)
-            logger.info(f"{task_id}导入流程完成")
+            final_state = run_import_graph(inputState)
+            # 回写入库结果：切片数与文档ID构成该任务的产出
+            final_chunks = (final_state or {}).get("chunks") or []
+            set_task_result(task_id, "chunk_count", len(final_chunks))
+            logger.info(f"{task_id}导入流程完成，document_id={document_id}，切片数={len(final_chunks)}")
             update_task_status(task_id, TASK_STATUS_COMPLETED)
         except Exception as e:
             update_task_status(task_id, TASK_STATUS_FAILED)
             logger.error(f"{task_id}导入流程失败{e}")
-        logger.info(f"{task_id}导入流程完成")
 
 
     def _get_date_path(self, local_base_dir) -> str:

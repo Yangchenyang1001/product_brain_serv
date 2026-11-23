@@ -46,17 +46,18 @@ def register_router(app: FastAPI):
             file: UploadFile = File(...),
 
     ):
-        # 1. 上传文件（本地/minio）
-        task_id, file_dir, import_file_path = service.process_upload_file(file)
+        # 1. 上传文件（本地/minio），上传阶段生成 task_id 与 document_id
+        upload_context = service.process_upload_file(file)
 
-        # 同步启动
-        # service.run_import_graph(task_id, file_dir, import_file_path)
-        # 2. 运行后台任务（跑graph的整个流程）
+        # 2. 运行后台任务（跑graph的整个流程），document_id 随图状态传递到入库节点
+        background_tasks.add_task(service.run_import_graph, upload_context)
 
-        background_tasks.add_task(service.run_import_graph, task_id, file_dir, import_file_path)
-
-        # 3. 返回
-        return UploadResponse(message="文件上传成功", task_id=task_id)
+        # 3. 返回：document_id 是后续切片管理接口的入口标识
+        return UploadResponse(
+            message="文件上传成功",
+            task_id=upload_context["task_id"],
+            document_id=upload_context["document_id"],
+        )
 
     @app.get("/status/{task_id}", response_model=TaskStatusResponse)
     async def get_status(task_id: str):

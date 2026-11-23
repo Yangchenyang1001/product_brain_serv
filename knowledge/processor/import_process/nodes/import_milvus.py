@@ -4,6 +4,7 @@ Milvus 存储节点
 将向量嵌入结果及元数据（商品名、原文、来源等）写入 Milvus 向量库，完成导入流程。
 """
 import json
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence, Optional, Dict, Any, List
@@ -30,13 +31,19 @@ class ScalarFieldSpec:
 
 
 # 预定义的标量字段（复用）
+# document_id 与 chunk_order 构成主切片的归属边界：前者隔离文档，后者固定文档内次序
 _SCALAR_FIELDS: Sequence[ScalarFieldSpec] = (
+    ScalarFieldSpec(field_name="document_id", datatype=DataType.VARCHAR, max_length=64),
+    ScalarFieldSpec(field_name="chunk_order", datatype=DataType.INT64),
     ScalarFieldSpec(field_name="content", datatype=DataType.VARCHAR, max_length=65535),
     ScalarFieldSpec(field_name="title", datatype=DataType.VARCHAR, max_length=65535),
     ScalarFieldSpec(field_name="parent_title", datatype=DataType.VARCHAR, max_length=65535),
     ScalarFieldSpec(field_name="file_title", datatype=DataType.VARCHAR, max_length=65535),
     ScalarFieldSpec(field_name="item_name", datatype=DataType.VARCHAR, max_length=65535),
 )
+
+# 切片管理接口依赖的必备标量字段，集合缺失时无法按文档隔离切片
+_REQUIRED_FIELDS: Sequence[str] = ("document_id", "chunk_order")
 
 
 class _MilvusInserter:
@@ -147,18 +154,27 @@ class _MilvusIndexBuilder:
 class ImportMilvusNode(BaseNode):
     name: str = "import_milvus_node"
 
-    def _validate_get_inputs(self, state: ImportGraphState) -> tuple[list[Any], int, ImportConfig]:
+    def _validate_get_inputs(self, state: ImportGraphState) -> tuple[list[Any], int, ImportConfig, str]:
         self.log_step("step1", "参数校验")
 
         # 1. 获取chunks
         chunks = state.get('chunks')
         config = get_config()
 
-        # 2. 校验是否为空
+        # 2. 校验文档ID：主切片必须有归属文档，且必须是切片接口可识别的 UUID
+        document_id = str(state.get('document_id') or "").strip()
+        if not document_id:
+            raise ValidationError("document_id 不能为空，主切片必须归属唯一文档", self.name)
+        try:
+            document_id = str(uuid.UUID(document_id))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValidationError("document_id 必须为合法 UUID", self.name, cause=exc) from exc
+
+        # 3. 校验是否为空
         if not chunks:
             raise ValidationError("待入库的切块chunk不存在", self.name)
 
-        # 3. 校验是否有混合向量
+        # 4. 校验是否有混合向量
         validated_chunks = []
         for chunk in chunks:
             if chunk.get('dense_vector') and chunk.get('sparse_vector'):
@@ -166,15 +182,15 @@ class ImportMilvusNode(BaseNode):
             else:
                 self.logger.error("待入库的切块chunk的混合向量不存在")
 
-        # 4. 判断有效集合
+        # 5. 判断有效集合
         if not validated_chunks:
             raise ValidationError("入库的chunk都无效", self.name)
 
-        # 5. 获取向量维度
+        # 6. 获取向量维度
         dim = config.embedding_dim
-        self.logger.info(f"导入Milvus向量数据库的有效块：{len(validated_chunks)},且chunk的向量维度{dim}")
+        self.logger.info(f"导入Milvus向量数据库的有效块：{len(validated_chunks)},且chunk的向量维度{dim},所属文档{document_id}")
 
-        return validated_chunks, dim, config
+        return validated_chunks, dim, config, document_id
 
     def _ensure_has_collection(self, milvus_client: MilvusClient, collection_name: str,
                                dim: int, delete_flag: bool = False):
@@ -188,6 +204,8 @@ class ImportMilvusNode(BaseNode):
 
         # 2. 判断集合是否存在
         if milvus_client.has_collection(collection_name=collection_name):
+            # 旧版本集合缺少 document_id/chunk_order 时，写入后无法按文档检索，必须显式失败
+            self._assert_required_fields(milvus_client, collection_name)
             self.logger.info(f"{collection_name}集合已经存在")
             return
 
@@ -204,6 +222,25 @@ class ImportMilvusNode(BaseNode):
             index_params=index
         )
 
+    def _assert_required_fields(self, milvus_client: MilvusClient, collection_name: str) -> None:
+        """集合已存在时校验必备字段，缺失说明是旧结构，需重建集合后重新导入。"""
+        fields = {
+            field.get("name")
+            for field in milvus_client.describe_collection(collection_name=collection_name).get("fields", [])
+        }
+        missing = [name for name in _REQUIRED_FIELDS if name not in fields]
+        if missing:
+            raise ValidationError(
+                f"集合 {collection_name} 缺少字段 {missing}，无法按文档隔离主切片，请删除该集合后重新导入",
+                self.name,
+            )
+
+    def _bind_document_fields(self, chunks: List[Dict[str, Any]], document_id: str) -> None:
+        """为每条主切片绑定文档ID，并按有效切片的原始顺序从1开始连续编号。"""
+        for chunk_order, chunk in enumerate(chunks, start=1):
+            chunk["document_id"] = document_id
+            chunk["chunk_order"] = chunk_order
+
     @dataclass(frozen=True)
     class ScalarFieldSpec:
         field_name: str
@@ -212,6 +249,8 @@ class ImportMilvusNode(BaseNode):
 
     # 标量字段规范（复用）
     _SCALAR_FIELDS: Sequence[ScalarFieldSpec] = (
+        ScalarFieldSpec(field_name="document_id", datatype=DataType.VARCHAR, max_length=64),
+        ScalarFieldSpec(field_name="chunk_order", datatype=DataType.INT64),
         ScalarFieldSpec(field_name="content", datatype=DataType.VARCHAR, max_length=65535),
         ScalarFieldSpec(field_name="title", datatype=DataType.VARCHAR, max_length=65535),
         ScalarFieldSpec(field_name="parent_title", datatype=DataType.VARCHAR, max_length=65535),
@@ -224,20 +263,24 @@ class ImportMilvusNode(BaseNode):
 
           a. step1 参数校验
             ⅰ. 获取chunks验证混合向量, 并返回
+            ⅱ. 校验 document_id 必填且为合法 UUID
           b. 获取milvus客户端
           c. step2 集合准备
-            ⅰ. 集合存在检查
+            ⅰ. 集合存在检查（已存在时校验 document_id/chunk_order 字段）
             ⅱ. 构建scheme
             ⅲ. 构建索引
             ⅳ. 创建集合
-          d. step3 数据插入
+          d. step3 切片归属绑定
+            ⅰ. 为每条主切片写入 document_id
+            ⅱ. 按有效切片顺序写入 chunk_order
+          e. step4 数据插入
             ⅰ. 批量插入数据, 回去id并回填到chunk_id
-          e. 更新state并返回
+          f. 更新state并返回
         :param state:
         :return:
         """
         # 1. 参数校验
-        validated_chunks, dim, config = self._validate_get_inputs(state)
+        validated_chunks, dim, config, document_id = self._validate_get_inputs(state)
 
         # 2. 获取milvus客户端
         milvus_client = StorageClients.get_milvus_client()
@@ -251,12 +294,16 @@ class ImportMilvusNode(BaseNode):
         # 4. 确保集合存在
         self._ensure_has_collection(milvus_client, collection, dim)
 
-        # 5. 插入
+        # 5. 绑定文档归属：切片必须带 document_id 与 chunk_order 才能被切片接口检索
+        self._bind_document_fields(validated_chunks, document_id)
+
+        # 6. 插入
         inserter = _MilvusInserter(client=milvus_client, collection_name=collection)
         final_chunks = inserter.insert(chunks=validated_chunks)
 
-        # 6. 更新state
+        # 7. 更新state：回传 document_id 与带主键的切片
         state['chunks'] = final_chunks
+        state['document_id'] = document_id
 
         return state
 
@@ -278,6 +325,7 @@ if __name__ == "__main__":
         content = json.load(fh)
 
         state: ImportGraphState = {
+            "document_id": str(uuid.uuid4()),
             "chunks": content.get("chunks", [])
         }
 
