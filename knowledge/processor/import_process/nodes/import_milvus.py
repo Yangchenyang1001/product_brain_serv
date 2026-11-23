@@ -18,6 +18,7 @@ from knowledge.processor.import_process.state import ImportGraphState
 import logging
 
 from knowledge.utils.client.storage_clients import StorageClients
+from knowledge.utils.id_util import next_chunk_id
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ _REQUIRED_FIELDS: Sequence[str] = ("document_id", "chunk_order")
 
 
 class _MilvusInserter:
-    """职责：将数据插入到Milvus 以及 回填chunk_id"""
+    """职责：为切片生成稳定主键并写入Milvus"""
 
     def __init__(self, client: MilvusClient, collection_name: str):
         self._client = client
@@ -56,22 +57,35 @@ class _MilvusInserter:
     def insert(self, chunks: List[Dict[str, Any]]) -> List[dict[str, Any]]:
         logger.info(f"开始插入{len(chunks)}块到Milvus...")
 
-        # 1. 插入
+        # 1. 主键由应用生成：AutoID 会在更新时更换主键，导致切片ID失效
+        self._assign_chunk_ids(chunks)
+
+        # 2. 插入
         inserted_result = self._client.insert(
             collection_name=self._collection_name,
             data=chunks
         )
         inserted_count = inserted_result.get('insert_count')
-        ids = inserted_result.get('ids')
 
-        # 2. 回填id
-        self._fill_chunk_ids(chunks, ids)
-        logger.info(f"完成插入{inserted_count}记录,并且回填chunk_id到chunk中")
+        # 3. 校验落库主键与内存一致，防止集合仍是AutoID结构而悄悄换ID
+        self._verify_chunk_ids(chunks, inserted_result.get('ids') or [])
+        logger.info(f"完成插入{inserted_count}记录, 切片主键由应用生成并随数据落库")
         return chunks
 
-    def _fill_chunk_ids(self, chunks: List[Dict[str, Any]], ids: List[Any]):
-        for chunk, id in zip(chunks, ids):
-            chunk["chunk_id"] = id
+    @staticmethod
+    def _assign_chunk_ids(chunks: List[Dict[str, Any]]) -> None:
+        for chunk in chunks:
+            chunk["chunk_id"] = next_chunk_id()
+
+    @staticmethod
+    def _verify_chunk_ids(chunks: List[Dict[str, Any]], ids: List[Any]) -> None:
+        expected_ids = [int(chunk["chunk_id"]) for chunk in chunks]
+        actual_ids = [int(chunk_id) for chunk_id in ids]
+        # 返回主键为空时无法确认，直接按失败处理，避免平台持有错误ID
+        if not actual_ids:
+            raise ValidationError("Milvus未返回切片主键，无法确认切片ID是否稳定")
+        if actual_ids != expected_ids:
+            raise ValidationError("Milvus返回的切片主键与写入值不一致，请删除该集合后重新导入")
 
 
 class _MilvusSchemaBuilder:
@@ -86,11 +100,12 @@ class _MilvusSchemaBuilder:
         schema = client.create_schema(enable_dynamic_field=True)
 
         # 2. 构建主键字段约束
+        # 主键由应用生成（auto_id=False），保证更新切片时 chunk_id 稳定不变
         schema.add_field(
             field_name="chunk_id",
             datatype=DataType.INT64,
             is_primary=True,
-            auto_id=True
+            auto_id=False
         )
 
         # 3. 构建向量字段约束
@@ -223,15 +238,21 @@ class ImportMilvusNode(BaseNode):
         )
 
     def _assert_required_fields(self, milvus_client: MilvusClient, collection_name: str) -> None:
-        """集合已存在时校验必备字段，缺失说明是旧结构，需重建集合后重新导入。"""
-        fields = {
-            field.get("name")
-            for field in milvus_client.describe_collection(collection_name=collection_name).get("fields", [])
-        }
+        """集合已存在时校验必备字段与主键结构，不满足说明是旧结构，需重建集合后重新导入。"""
+        field_specs = milvus_client.describe_collection(collection_name=collection_name).get("fields", [])
+        fields = {field.get("name") for field in field_specs}
         missing = [name for name in _REQUIRED_FIELDS if name not in fields]
         if missing:
             raise ValidationError(
                 f"集合 {collection_name} 缺少字段 {missing}，无法按文档隔离主切片，请删除该集合后重新导入",
+                self.name,
+            )
+
+        # 旧集合的主键是 AutoID，更新切片时 Milvus 会重新生成主键，必须重建
+        primary_key = next((field for field in field_specs if field.get("name") == "chunk_id"), None)
+        if primary_key is None or primary_key.get("auto_id", False):
+            raise ValidationError(
+                f"集合 {collection_name} 的 chunk_id 为 AutoID 主键，无法稳定更新切片ID，请删除该集合后重新导入",
                 self.name,
             )
 
@@ -266,7 +287,7 @@ class ImportMilvusNode(BaseNode):
             ⅱ. 校验 document_id 必填且为合法 UUID
           b. 获取milvus客户端
           c. step2 集合准备
-            ⅰ. 集合存在检查（已存在时校验 document_id/chunk_order 字段）
+            ⅰ. 集合存在检查（已存在时校验 document_id/chunk_order 字段与主键非AutoID）
             ⅱ. 构建scheme
             ⅲ. 构建索引
             ⅳ. 创建集合
@@ -274,7 +295,8 @@ class ImportMilvusNode(BaseNode):
             ⅰ. 为每条主切片写入 document_id
             ⅱ. 按有效切片顺序写入 chunk_order
           e. step4 数据插入
-            ⅰ. 批量插入数据, 回去id并回填到chunk_id
+            ⅰ. 为每条切片生成稳定主键 chunk_id（AutoID 会在更新时换主键）
+            ⅱ. 批量插入数据，并校验落库主键与生成值一致
           f. 更新state并返回
         :param state:
         :return:

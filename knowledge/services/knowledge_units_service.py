@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from knowledge.schema.task_schema import ChunkWriteRequest
 from knowledge.utils import milvus_utils
 from knowledge.utils.embedding_utils import generate_embeddings
+from knowledge.utils.id_util import next_chunk_id
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,8 @@ class KnowledgeUnitsService:
         dense_vector, sparse_vector = self._generate_chunk_vectors(source_chunk.get("item_name", ""), request.content)
         new_chunk = {
             "document_id": normalized_document_id,
+            # 主键由应用生成，新增后即可作为稳定资源标识返回给平台
+            "chunk_id": next_chunk_id(),
             "chunk_order": request.chunk_order or max(
                 int(chunk.get("chunk_order", 0)) for chunk in chunk_list
             ) + 1,
@@ -70,7 +73,9 @@ class KnowledgeUnitsService:
             "sparse_vector": sparse_vector,
         }
         try:
-            new_chunk["chunk_id"] = milvus_utils.insert_chunk(new_chunk)
+            milvus_utils.insert_chunk(new_chunk)
+        except milvus_utils.ChunkIdNotWritableError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail="Milvus新增切片失败") from exc
 
@@ -101,6 +106,8 @@ class KnowledgeUnitsService:
         })
         try:
             milvus_utils.update_chunk(updated_chunk)
+        except milvus_utils.ChunkIdNotWritableError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail="Milvus修改切片失败") from exc
 
