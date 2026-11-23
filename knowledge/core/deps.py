@@ -6,6 +6,7 @@
 from functools import cache, lru_cache
 
 from knowledge.services.file_import_service import ImportFileService
+from knowledge.services.knowledge_units_service import KnowledgeUnitsService
 from knowledge.services.query_service import QueryService
 
 
@@ -22,3 +23,8 @@ def get_import_file_service():
 @lru_cache
 def get_query_service() -> QueryService:
     return QueryService()
+
+
+@lru_cache
+def get_knowledge_units_service() -> KnowledgeUnitsService:
+    return KnowledgeUnitsService()
