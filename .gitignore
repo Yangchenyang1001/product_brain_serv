@@ -82,6 +82,12 @@ models/*.onnx
 # MinerU / PDF 转换中间产物
 *.pdf.md.tmp
 
+# 本地运行输出与调试产物
+output/
+
+# 本地临时图片资源
+knowledge/front/p4.jpg
+
 
 # ==================== 保留项（避免过度忽略） ====================
 # 保留各目录的 .gitkeep，方便占位
