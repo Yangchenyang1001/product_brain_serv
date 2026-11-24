@@ -104,6 +104,16 @@ class ImportConfig:
         default_factory=lambda: os.getenv("MINIO_BUCKET_NAME", "")
     )
     minio_secure: bool = False
+    # 预签名下载链接有效期（天）
+    minio_presign_expiry_days: int = field(
+        default_factory=lambda: int(os.getenv("MINIO_PRESIGN_EXPIRY_DAYS", "7"))
+    )
+    # 对外访问地址（如 http://192.168.1.10:9000）：MINIO_ENDPOINT 是容器内/本机地址时，
+    # 预签名链接里的 host 会是 127.0.0.1，Java 侧打不开；配置此项后改用该地址签名。
+    # 注意 SigV4 签名包含 Host，不能签完再替换域名，必须用该地址的客户端来签。
+    minio_public_endpoint: str = field(
+        default_factory=lambda: os.getenv("MINIO_PUBLIC_ENDPOINT", "")
+    )
 
     # ==================== 向量配置 ====================
     embedding_dim: int = field(

@@ -135,6 +135,14 @@ def part1_upload_stage() -> dict:
     check("document_id 与 task_id 不复用",
           document_id != upload_context.get("task_id"), f"task_id={upload_context.get('task_id')}")
 
+    # 上传阶段即产出文件摘要与原始文件下载链接（/status 的 result 里透给 Java）
+    task_result = task_util.get_task_results(upload_context.get("task_id", ""))
+    sha = task_result.get("file_sha256") or ""
+    check("result 含 64 位小写十六进制 file_sha256",
+          len(sha) == 64 and all(c in "0123456789abcdef" for c in sha), f"file_sha256={sha}")
+    check("result 含 original_file_download_url 键",
+          "original_file_download_url" in task_result, f"keys={sorted(task_result)}")
+
     # 切片接口按 UUID 解析, 生成的 ID 必须能通过同一套校验
     from knowledge.services.knowledge_units_service import KnowledgeUnitsService
     normalized_ok = True

@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 from typing import Optional
 
@@ -48,6 +49,41 @@ class StorageClients(BaseClientManager):
         except Exception as e:
             logger.error(f"MinIO 客户端初始化失败:{e}")
             raise ConnectionError(f"MinIO 配置错误:{e}") from e  # from e 保留原始异常的堆栈跟踪信息
+
+    _minio_presign_client: Optional[Minio] = None
+    _minio_presign_lock = threading.Lock()
+
+    @classmethod
+    def get_minio_presign_client(cls) -> Minio:
+        """
+        生成下载链接用的客户端：
+        配置了 MINIO_PUBLIC_ENDPOINT 时用对外地址创建（SigV4 签名包含 Host，签完不能替换域名），
+        否则复用内网客户端。
+        """
+        public_endpoint = (os.getenv("MINIO_PUBLIC_ENDPOINT") or "").strip()
+        if not public_endpoint:
+            return cls.get_minio_client()
+        return cls._get_or_create(
+            "_minio_presign_client", cls._minio_presign_lock, cls._create_minio_presign_client
+        )
+
+    @classmethod
+    def _create_minio_presign_client(cls) -> Minio:
+        endpoint = (os.getenv("MINIO_PUBLIC_ENDPOINT") or "").strip()
+        secure = False
+        if endpoint.startswith("https://"):
+            endpoint, secure = endpoint[len("https://"):], True
+        elif endpoint.startswith("http://"):
+            endpoint = endpoint[len("http://"):]
+        endpoint = endpoint.rstrip("/")
+        if not endpoint:
+            raise EnvironmentError("MINIO_PUBLIC_ENDPOINT 配置为空")
+        return Minio(
+            endpoint,
+            cls._require_env("MINIO_ACCESS_KEY"),
+            cls._require_env("MINIO_SECRET_KEY"),
+            secure=secure,
+        )
 
     """
      存储类客户端：Milvus

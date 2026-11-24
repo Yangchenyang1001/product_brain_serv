@@ -16,4 +16,4 @@ class TaskStatusResponse(BaseModel):
     done_list: List[str] = Field(...,description="已完成节点列表")
     running_list: List[str] = Field(...,description="正在运行节点列表")
     durations: Dict[str,float] = Field(default={},description="各个节点耗时(秒)")
-    result: Dict[str, Any] = Field(default_factory=dict, description="任务产出（document_id、chunk_count 等）")
+    result: Dict[str, Any] = Field(default_factory=dict, description="任务产出（document_id、file_sha256、original_file_download_url、chunk_count、item_name、total_text_length 等）")

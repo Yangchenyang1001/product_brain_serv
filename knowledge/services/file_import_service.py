@@ -4,17 +4,17 @@
 封装文件导入的完整业务逻辑，协调导入流程图的执行、任务状态管理和异常处理。
 """
 import datetime
+import hashlib
 import logging
 import os
-import shutil
 import uuid
-from typing import Dict
+from typing import Dict, Optional, Tuple
 
 from fastapi import UploadFile
 
 from knowledge.core.paths import get_local_base_dir
 from knowledge.processor.import_process.config import get_config
-from knowledge.processor.import_process.exceptions import FileProcessingError, MinioError
+from knowledge.processor.import_process.exceptions import FileProcessingError
 from knowledge.processor.import_process.main_graph import run_import_graph
 from knowledge.utils.client.storage_clients import StorageClients
 from knowledge.utils.task_util import update_task_status, add_running_task, add_done_task, TASK_STATUS_PROCESSING, \
@@ -48,12 +48,17 @@ class ImportFileService:
 
         add_running_task(task_id,"upload_file")
         # 双写
-        # 保存到本地
-        import_file_path = self._upload_file_to_local(file, file_dir)
-        # 保存到minIO   file.name用于存储的子路径
-        self._upload_file_to_minio(import_file_path, file.filename)
+        # 保存到本地（同一次写入顺带算出 SHA-256，避免二次读盘）
+        import_file_path, file_sha256 = self._upload_file_to_local(file, file_dir)
+        # 保存到minIO，返回对象名用于生成下载链接
+        object_name = self._upload_file_to_minio(import_file_path, file.filename, task_id)
+        original_file_download_url = self._build_download_url(object_name)
 
         add_done_task(task_id,"upload_file")
+
+        # 上传阶段就能确定的产出：摘要 + 原始文件下载链接（Java 侧 fileSha256 / originalFileDownloadUrl）
+        set_task_result(task_id, "file_sha256", file_sha256)
+        set_task_result(task_id, "original_file_download_url", original_file_download_url or None)
 
         # 3. 上传上下文：document_id 随图状态一路带到入库节点
         return {
@@ -92,6 +97,8 @@ class ImportFileService:
             # 回写入库结果：切片数与文档ID构成该任务的产出
             final_chunks = (final_state or {}).get("chunks") or []
             set_task_result(task_id, "chunk_count", len(final_chunks))
+            set_task_result(task_id, "item_name", (final_state or {}).get("item_name") or "")
+            set_task_result(task_id, "total_text_length", sum(len(c.get("content") or "") for c in final_chunks))
             logger.info(f"{task_id}导入流程完成，document_id={document_id}，切片数={len(final_chunks)}")
             update_task_status(task_id, TASK_STATUS_COMPLETED)
         except Exception as e:
@@ -102,48 +109,78 @@ class ImportFileService:
     def _get_date_path(self, local_base_dir) -> str:
         return os.path.join(local_base_dir, datetime.datetime.now().strftime("%Y%m%d"))
 
-    def _upload_file_to_local(self, file: UploadFile, file_dir:str) -> str:
+    def _upload_file_to_local(self, file: UploadFile, file_dir:str) -> Tuple[str, str]:
         """
-        上传的文件保存到本地
+        上传的文件保存到本地，同时流式计算 SHA-256
         :param file:
         :param file_dir:
-        :return:
+        :return: (本地文件路径, 文件内容的 sha256 小写十六进制摘要)
         """
         # 确保文件目录存在
         os.makedirs(file_dir, exist_ok=True)
         # 保存文件
+        digest = hashlib.sha256()
         try:
             # 构建文件的路径
             file_path = os.path.join(file_dir, file.filename)
             with open(file_path, "wb") as f:
-                shutil.copyfileobj(file.file, f)  # 在缓冲区的写操作, 效率更高1MB
+                # 分块读写（1MB），一边落盘一边喂给摘要器，64位十六进制结果与小写约定一致
+                while True:
+                    chunk = file.file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    f.write(chunk)
         except IOError as e:
             logger.error(f"文件保存失败: {e}")
             raise FileProcessingError(f"{file.filename}文件保存失败: {e}")
 
-        return file_path
+        return file_path, digest.hexdigest()
 
-    def _upload_file_to_minio(self, import_file_path: str, file_name: str) -> str:
+    def _upload_file_to_minio(self, import_file_path: str, file_name: str, task_id: str) -> Optional[str]:
         """
         文件保存到minIO
         :param import_file_path: 上传的文件路径
         :param file_name: 文件名
-        :return: 保存的文件路径
+        :param task_id: 任务ID，作为对象路径的一段，避免同名文件互相覆盖
+        :return: MinIO 对象名；上传失败返回 None
         """
         try:
             client = StorageClients.get_minio_client()
         except ConnectionError as e:
             logger.warning(f"连接MinIO失败: {e}")
             # 获取客户端失败不影响后续流程
-            return
+            return None
 
         try:
             config = get_config()
-            object_name = f"origin_files/{datetime.datetime.now().strftime('%Y%m%d')}/{file_name}  "
+            date_path = datetime.datetime.now().strftime('%Y%m%d')
+            # 路径带上任务ID：同一天重复上传同名文件不会覆盖前一份
+            object_name = f"origin_files/{date_path}/{task_id}/{file_name}"
             client.fput_object(bucket_name=config.minio_bucket, object_name=object_name,
                                              file_path=import_file_path)
-        except MinioError as e:
+        except Exception as e:
             logger.warning(f"MinIO 文件上传失败: {e}")
-            return
+            return None
 
-        return ""
+        return object_name
+
+    def _build_download_url(self, object_name: Optional[str]) -> str:
+        """
+        为已上传对象生成预签名下载链接（Java 侧 originalFileDownloadUrl）
+        :param object_name: MinIO 对象名
+        :return: 预签名 URL；对象名为空或签名失败返回空串
+        """
+        if not object_name:
+            return ""
+        try:
+            config = get_config()
+            client = StorageClients.get_minio_presign_client()
+            return client.presigned_get_object(
+                bucket_name=config.minio_bucket,
+                object_name=object_name,
+                expires=datetime.timedelta(days=config.minio_presign_expiry_days),
+            )
+        except Exception as e:
+            logger.warning(f"生成 MinIO 下载链接失败: {e}")
+            return ""
