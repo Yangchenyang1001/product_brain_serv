@@ -49,6 +49,36 @@ class ImportConfig:
         default_factory=lambda: os.getenv("MODEL", "")
     )
 
+    # ==================== MinerU 配置 ====================
+    # 网络版 PDF 解析使用（pdf_to_md_net 节点）
+    mineru_base_url: str = field(
+        default_factory=lambda: os.getenv("MINERU_BASE_URL", "https://mineru.net/api/v4")
+    )
+    mineru_api_token: str = field(
+        default_factory=lambda: os.getenv("MINERU_API_TOKEN", "")
+    )
+    mineru_model_version: str = field(
+        default_factory=lambda: os.getenv("MINERU_MODEL_VERSION", "pipeline")
+    )
+    mineru_language: str = field(
+        default_factory=lambda: os.getenv("MINERU_LANGUAGE", "ch")
+    )
+    mineru_enable_formula: bool = field(
+        default_factory=lambda: os.getenv("MINERU_ENABLE_FORMULA", "true").lower() in ("1", "true", "yes")
+    )
+    mineru_enable_table: bool = field(
+        default_factory=lambda: os.getenv("MINERU_ENABLE_TABLE", "true").lower() in ("1", "true", "yes")
+    )
+    mineru_poll_interval_seconds: int = field(
+        default_factory=lambda: int(os.getenv("MINERU_POLL_INTERVAL_SECONDS", "5"))
+    )
+    mineru_max_wait_seconds: int = field(
+        default_factory=lambda: int(os.getenv("MINERU_MAX_WAIT_SECONDS", "1800"))
+    )
+    mineru_request_timeout_seconds: int = field(
+        default_factory=lambda: int(os.getenv("MINERU_REQUEST_TIMEOUT_SECONDS", "120"))
+    )
+
     # ==================== Milvus 配置 ====================
     milvus_url: str = field(
         default_factory=lambda: os.getenv("MILVUS_URL", "")

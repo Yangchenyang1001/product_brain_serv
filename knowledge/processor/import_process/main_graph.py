@@ -8,6 +8,7 @@
 """
 import json
 import logging
+import os
 import uuid
 
 from langgraph.constants import END
@@ -16,6 +17,7 @@ from langgraph.graph.state import CompiledStateGraph, StateGraph
 from knowledge.processor.import_process.base import setup_logging
 from knowledge.processor.import_process.nodes.bge_embedding import BgeEmbeddingChunksNode
 from knowledge.processor.import_process.nodes.pdf_to_md import PdfToMdNode
+from knowledge.processor.import_process.nodes.pdf_to_md_net import PdfToMdNetNode
 from knowledge.processor.import_process.nodes.entry import EntryNode
 from knowledge.processor.import_process.nodes.md_img import MarkDownImageNode
 from knowledge.processor.import_process.nodes.document_split import DocumentSplitNode
@@ -23,6 +25,13 @@ from knowledge.processor.import_process.nodes.item_name_recognition import ItemN
 from knowledge.processor.import_process.nodes.import_milvus import ImportMilvusNode
 
 from knowledge.processor.import_process.state import ImportGraphState, create_default_state
+
+
+# PDF 解析节点选择：net = 调用 MinerU 开放 API（默认，不依赖本地模型），local = 调用本地 mineru 命令行
+_PDF_TO_MD_BACKEND = os.getenv("PDF_TO_MD_BACKEND", "net").strip().lower()
+_PDF_TO_MD_NODE_NAME = (
+    "pdf_to_md_node" if _PDF_TO_MD_BACKEND in ("local", "cli") else "pdf_to_md_net_node"
+)
 
 
 def load_file_router(state: ImportGraphState):
@@ -38,7 +47,7 @@ def load_file_router(state: ImportGraphState):
         下一个节点名称
     """
     if state.get("is_pdf_read_enabled"):
-        return "pdf_to_md_node"
+        return _PDF_TO_MD_NODE_NAME
     if state.get("is_md_read_enabled"):
         return "md_img_node"
     return "END"
@@ -77,7 +86,9 @@ def create_import_graph() -> CompiledStateGraph:
     # 2. 定义节点  参考nodes目录
     nodes = {
         "entry_node": EntryNode(),
-        "pdf_to_md_node": PdfToMdNode(),
+        _PDF_TO_MD_NODE_NAME: (
+            PdfToMdNode() if _PDF_TO_MD_NODE_NAME == "pdf_to_md_node" else PdfToMdNetNode()
+        ),
         "md_img_node": MarkDownImageNode(),
         "document_split_node": DocumentSplitNode(),
         "item_name_rec_node": ItemNameRecognitionNode(),
@@ -99,13 +110,13 @@ def create_import_graph() -> CompiledStateGraph:
         "entry_node",
         load_file_router,
         {
-            "pdf_to_md_node": "pdf_to_md_node",
+            _PDF_TO_MD_NODE_NAME: _PDF_TO_MD_NODE_NAME,
             "md_img_node": "md_img_node",
             "END": END
         }
     )
 
-    import_graph.add_edge("pdf_to_md_node", "md_img_node")
+    import_graph.add_edge(_PDF_TO_MD_NODE_NAME, "md_img_node")
     import_graph.add_edge("md_img_node", "document_split_node")
     import_graph.add_edge("document_split_node", "item_name_rec_node")
     import_graph.add_edge("item_name_rec_node", "bge_embedding_node")
