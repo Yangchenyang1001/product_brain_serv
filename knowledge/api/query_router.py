@@ -12,7 +12,7 @@ import logging
 import os
 
 import uvicorn
-from fastapi import FastAPI, BackgroundTasks, Request, Depends, HTTPException
+from fastapi import FastAPI, BackgroundTasks, Request, Depends, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -91,6 +91,14 @@ def register_router(app):
             service: QueryService = Depends(get_query_service),
     ):
         count = service.clear_history(session_id)
+        return {"message": "History deleted", "deleted_count": count}
+
+    @app.post("/history/clear_all")
+    async def clear_all_history(
+            session_ids: list[int] = Body(..., embed=True),
+            service: QueryService = Depends(get_query_service),
+    ):
+        count = service.clear_history_batch(session_ids)
         return {"message": "History cleared", "deleted_count": count}
 
 

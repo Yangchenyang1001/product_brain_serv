@@ -73,3 +73,11 @@ class QueryService:
         from knowledge.utils.mongo_history_util import clear_history
         return clear_history(session_id)
 
+    def clear_history_batch(self, session_ids: list) -> int:
+        from knowledge.utils.mongo_history_util import clear_history
+        index =0
+        for session_id in session_ids:
+            index += clear_history(session_id)
+        logging.info(f"clear_history_batch:{index}")
+        return index
+

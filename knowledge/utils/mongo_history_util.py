@@ -65,11 +65,31 @@ def save_chat_message(
         return str(result.inserted_id)
 
 
+def _session_filter(session_id) -> Dict[str, Any]:
+    """
+    构造会话过滤条件（兼容 session_id 的不同类型）
+
+    写入时 session_id 走 QueryRequest.session_id(str)，Mongo 里存的是字符串 "30"；
+    而 /history/clear_all 的入参声明为 list[int]，上游(Java)传的是 List<Long>，
+    到了这里仍是数字 30。Mongo 的相等匹配带类型，30 != "30"，删除于是命中 0 条。
+    这里同时匹配字符串与数字两种形态，读取与删除都走同一套条件。
+    """
+    candidates = [session_id]
+    text = str(session_id)
+    if text not in candidates:
+        candidates.append(text)
+    if text.lstrip("+-").isdigit():
+        num = int(text)
+        if num not in candidates:
+            candidates.append(num)
+    return {"session_id": {"$in": candidates}}
+
+
 def get_recent_messages(session_id: str, limit: int = 10) -> List[Dict[str, Any]]:
     try:
         cursor = (
             _get_collection()
-            .find({"session_id": session_id})
+            .find(_session_filter(session_id))
             .sort("ts", DESCENDING)
             .limit(limit)
         )
@@ -81,8 +101,8 @@ def get_recent_messages(session_id: str, limit: int = 10) -> List[Dict[str, Any]
 
 def clear_history(session_id: str) -> int:
     try:
-        result = _get_collection().delete_many({"session_id": session_id})
-        logger.info(f"Deleted {result.deleted_count} messages for session {session_id}")
+        result = _get_collection().delete_many(_session_filter(session_id))
+        logger.info(f"Deleted {result.deleted_count} messages for session {session_id!r}")
         return result.deleted_count
     except Exception as e:
         logger.error(f"Error clearing history for session {session_id}: {e}")
